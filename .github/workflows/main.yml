@@ -42,9 +42,9 @@ jobs:
       # 📦 SETUP
       # ============================================
       
-      - name:  📦 Checkout Repository
+      - name: 📦 Checkout Repository
         uses: actions/checkout@v4
-        with: 
+        with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
       
@@ -71,7 +71,7 @@ jobs:
           echo "Runtime: $RUNTIME_HOURS hours"
           echo "Reuse Wallets: $REUSE_WALLETS"
           echo ""
-          echo "DKN Models:  llama3.3:70b-instruct-q4_K_M, gemma3:27b"
+          echo "DKN Models: llama3.3:70b-instruct-q4_K_M, gemma3:27b"
           echo "API Keys: ALL keys shared across all runners (load-balanced)"
           echo ""
           echo "System:"
@@ -90,16 +90,24 @@ jobs:
           WALLET_FILE="wallets.json"
           
           if [[ "$REUSE_WALLETS" == "true" && -f "$WALLET_FILE" ]]; then
-            echo "♻️  Runner-${{ matrix.runner }}:  Using shared wallets from repository"
+            echo "♻️  Runner-${{ matrix.runner }}: Using shared wallets from repository"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             
-            ACTUAL_COUNT=$(jq '. | length' $WALLET_FILE)
-            echo "✅ Loaded $ACTUAL_COUNT wallets from $WALLET_FILE"
-            echo "📅 Wallets are version controlled (git)"
-            echo "🔄 All runners use the SAME wallets"
-            
-          else
-            echo "🆕 Runner-${{ matrix. runner }}: Generating new shared wallets"
+            # Validate JSON first
+            if ! jq empty "$WALLET_FILE" 2>/dev/null; then
+              echo "❌ ERROR:  $WALLET_FILE is invalid JSON!"
+              echo "Regenerating wallets..."
+              REUSE_WALLETS="false"
+            else
+              ACTUAL_COUNT=$(jq '. | length' "$WALLET_FILE")
+              echo "✅ Loaded $ACTUAL_COUNT wallets from $WALLET_FILE"
+              echo "📅 Wallets are version controlled (git)"
+              echo "🔄 All runners use the SAME wallets"
+            fi
+          fi
+          
+          if [[ "$REUSE_WALLETS" != "true" || !  -f "$WALLET_FILE" ]]; then
+            echo "🆕 Runner-${{ matrix.runner }}:  Generating new shared wallets"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             
             # Only runner 1 generates, others wait
@@ -117,9 +125,9 @@ jobs:
               # Wait for wallets. json to be committed by runner 1
               for i in {1..60}; do
                 git pull --rebase origin main || git pull --rebase origin master || true
-                if [ -f "$WALLET_FILE" ]; then
-                  ACTUAL_COUNT=$(jq '. | length' $WALLET_FILE)
-                  echo "✅ Found $ACTUAL_COUNT wallets from Runner-1"
+                if [ -f "$WALLET_FILE" ] && jq empty "$WALLET_FILE" 2>/dev/null; then
+                  ACTUAL_COUNT=$(jq '. | length' "$WALLET_FILE")
+                  echo "✅ Found $ACTUAL_COUNT valid wallets from Runner-1"
                   break
                 fi
                 [ $i -eq 60 ] && echo "❌ Timeout waiting for wallets" && exit 1
@@ -128,13 +136,15 @@ jobs:
             fi
           fi
           
-          ACTUAL_COUNT=$(jq '. | length' $WALLET_FILE)
+          ACTUAL_COUNT=$(jq '. | length' "$WALLET_FILE")
           echo "wallet_count=$ACTUAL_COUNT" >> $GITHUB_OUTPUT
           echo "wallet_file=$WALLET_FILE" >> $GITHUB_OUTPUT
           
           echo ""
           echo "📋 Shared Wallet Preview (used by all runners):"
-          jq '.[0] | {address: .address, private_key: (. private_key[: 10] + "..." + . private_key[-6:])}' $WALLET_FILE
+          # Fixed jq syntax for string slicing
+          PREVIEW=$(jq -r '.[0] | "Address: \(.address)\nPrivate Key: \(.private_key[0:16]).. .\(. private_key[-10:])"' "$WALLET_FILE")
+          echo "$PREVIEW"
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       
@@ -156,6 +166,12 @@ jobs:
           if [ !  -f "$WALLET_FILE" ]; then
             echo "⚠️  $WALLET_FILE not found, skipping commit"
             exit 0
+          fi
+          
+          # Validate JSON before commit
+          if ! jq empty "$WALLET_FILE" 2>/dev/null; then
+            echo "❌ ERROR: Cannot commit invalid JSON!"
+            exit 1
           fi
           
           git pull --rebase origin main || git pull --rebase origin master || true
@@ -193,7 +209,7 @@ jobs:
       # 🔑 LOAD API KEYS (SHARED ACROSS ALL RUNNERS)
       # ============================================
       
-      - name:  🔑 Load vLLM Server Config (All Runners Use Same Server)
+      - name: 🔑 Load vLLM Server Config (All Runners Use Same Server)
         id: load_keys
         env:
           VLLM_API_KEY: ${{ secrets. VLLM_API_KEY }}
@@ -256,13 +272,13 @@ jobs:
       - name: 🚀 Start Proxy
         working-directory: ./proxy
         run: |
-          echo "🚀 Runner-${{ matrix. runner }}: Starting proxy server..."
+          echo "🚀 Runner-${{ matrix.runner }}: Starting proxy server..."
           
           nohup node index.js > proxy. log 2>&1 &
           echo $! > proxy.pid
           
           echo "⏳ Waiting for proxy..."
-          for i in {1.. 30}; do
+          for i in {1..30}; do
             if curl -sf http://localhost:$PROXY_PORT/health > /dev/null 2>&1; then
               echo "✅ Proxy ready on port $PROXY_PORT"
               break
@@ -282,7 +298,7 @@ jobs:
           # 1. Jalankan script tapi jangan langsung exit kalau error (set +e)
           # 2. Simpan output ke file log. txt dan tampilkan juga ke layar (tee)
           set +e
-          ./test_proxy.sh | tee proxy_test.log
+          ./test_proxy.sh | tee proxy_test. log
           SCRIPT_EXIT_CODE=${PIPESTATUS[0]}
           set -e
           
@@ -300,7 +316,7 @@ jobs:
           
           # 4. Logic Baru: Lanjut jika Pass >= 2
           if [ "$PASS_COUNT" -ge 2 ]; then
-            echo "✅ Success condition met:  $PASS_COUNT tests passed (>= 2 required)."
+            echo "✅ Success condition met: $PASS_COUNT tests passed (>= 2 required)."
             exit 0
           else
             echo "❌ Failed condition:  Only $PASS_COUNT tests passed (less than 2)."
@@ -328,7 +344,7 @@ jobs:
           ACTUAL_COUNT=$(jq '. | length' "$WALLET_FILE")
           TOTAL=$(( $ACTUAL_COUNT * $CONTAINERS_PER_WALLET ))
           
-          echo "Runner-${{ matrix.runner }}:  Deploying $TOTAL containers..."
+          echo "Runner-${{ matrix.runner }}: Deploying $TOTAL containers..."
           echo "Using $ACTUAL_COUNT wallets from SHARED $WALLET_FILE"
           echo "Using vLLM server:  self-hosted (unlimited)"
           
@@ -341,7 +357,7 @@ jobs:
           STARTED=0
           
           for (( w=0; w<$ACTUAL_COUNT; w++ )); do
-            ADDRESS=$(jq -r ". [$w].address" "$WALLET_FILE")
+            ADDRESS=$(jq -r ".[$w].address" "$WALLET_FILE")
             PRIVKEY=$(jq -r ".[$w].private_key" "$WALLET_FILE")
             PRIVKEY="${PRIVKEY#0x}"
             ADDR_SHORT="${ADDRESS: 2:6}"
@@ -387,7 +403,7 @@ jobs:
       # ============================================
       
       - name: 📊 Send Deployment to Monitor
-        if:  success()
+        if: success()
         continue-on-error: true
         env:
           MONITOR_VPS_URL: 'http://208.76.40.194:1155'
@@ -458,7 +474,7 @@ jobs:
           
           MESSAGE="🚀 *Runner-${{ matrix.runner }} Deployed! *
 
-          🐳 Containers: \`$RUNNING/$TOTAL\` ($SUCCESS_RATE%)
+          🐳 Containers:  \`$RUNNING/$TOTAL\` ($SUCCESS_RATE%)
           💰 Wallets: \`$WALLET_COUNT\` (SHARED across all runners)
           🖥️  Backend: \`vLLM Self-Hosted\` (unlimited)
           🤖 Models: \`llama3.3:70b\` + \`gemma3:27b\`
@@ -499,7 +515,7 @@ jobs:
           MONITOR_VPS_URL: 'http://208.76.40.194:1155'
           MONITOR_API_KEY: 'dkn-monitor-secret-key-12345'
         run: |
-          echo "⏰ Runner-${{ matrix.runner }}:  Starting runtime with monitoring..."
+          echo "⏰ Runner-${{ matrix. runner }}: Starting runtime with monitoring..."
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           
           RUNTIME_SEC=$(echo "$RUNTIME_HOURS * 3600" | bc | cut -d.  -f1)
@@ -515,7 +531,7 @@ jobs:
           
           echo "Runtime: $RUNTIME_HOURS hours"
           echo "Start: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "Monitor: $MONITOR_URL"
+          echo "Monitor:  $MONITOR_URL"
           echo ""
           
           HEARTBEAT_COUNT=0
@@ -542,8 +558,8 @@ jobs:
                 -d "{
                   \"github_user\": \"$GITHUB_USER\",
                   \"repository\": \"${{ github.repository }}\",
-                  \"run_id\": \"${{ github.run_id }}\",
-                  \"run_number\": ${{ github. run_number }},
+                  \"run_id\":  \"${{ github.run_id }}\",
+                  \"run_number\": ${{ github.run_number }},
                   \"runner_id\": ${{ matrix.runner }},
                   \"wallet\": \"$FIRST_WALLET\",
                   \"containers_running\": $RUNNING,
@@ -552,7 +568,7 @@ jobs:
                   \"models\": \"llama3.3:70b,gemma3:27b\",
                   \"uptime_seconds\": $ELAPSED,
                   \"status\": \"running\",
-                  \"timestamp\":  \"$(date -u '+%Y-%m-%dT%H:%M:%SZ')\"
+                  \"timestamp\": \"$(date -u '+%Y-%m-%dT%H:%M:%SZ')\"
                 }" > /dev/null 2>&1 || echo "⚠️ Heartbeat failed (non-critical)"
               
               # Set next heartbeat time (5 menit dari sekarang)
@@ -592,11 +608,11 @@ jobs:
       - name: 📦 Save Logs to Artifacts
         if: always()
         uses: actions/upload-artifact@v4
-        with: 
-          name: logs-runner-${{ matrix.runner }}-${{ github.run_id }}
+        with:
+          name:  logs-runner-${{ matrix.runner }}-${{ github.run_id }}
           path: proxy/proxy.log
           retention-days: 7
-          if-no-files-found:  warn
+          if-no-files-found: warn
       
       # ============================================
       # 📱 TELEGRAM NOTIFICATION (FAILURE ONLY)
@@ -625,7 +641,7 @@ jobs:
             TRIGGER_TEXT="Manual"
           fi
           
-          MESSAGE="🚨 *Runner-${{ matrix. runner }} ERROR!*
+          MESSAGE="🚨 *Runner-${{ matrix. runner }} ERROR! *
 
           *STATUS*
           ├─ State: Failed
@@ -663,7 +679,7 @@ jobs:
     if: always()
     
     steps:
-      - name:  📊 Generate Summary
+      - name: 📊 Generate Summary
         env:
           BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
           CHAT_ID: '-1001377822481'
